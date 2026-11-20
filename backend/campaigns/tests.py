@@ -1794,24 +1794,45 @@ class CampaignWorkflowTests(APITestCase):
             campaign=other_campaign,
             lead=other_lead,
             status='REPLIED',
+            last_replied_at=timezone.now(),
         )
 
-        # Acme user should see zero data (org2's data must not leak)
+        # Acme must not see any analytics belonging to Other Corp.
         response = self.client.get('/api/v1/analytics/dashboard/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['total_leads'], 0)
         self.assertEqual(response.data['active_campaigns'], 0)
         self.assertEqual(response.data['emails_sent'], 0)
+        self.assertEqual(response.data['opened'], 0)
         self.assertEqual(response.data['replied'], 0)
+        self.assertEqual(response.data['clicked'], 0)
+        self.assertEqual(response.data['bounced'], 0)
         self.assertEqual(response.data['campaign_stats'], [])
+        self.assertEqual(response.data['recent_activity'], [])
 
-        # org2 user should only see their own data
+        time_series = response.data['time_series']
+        self.assertTrue(all(value == 0 for value in time_series['sent']))
+        self.assertTrue(all(value == 0 for value in time_series['opened']))
+        self.assertTrue(all(value == 0 for value in time_series['replied']))
+
+        # Other Corp must see its own analytics.
         self.client.force_authenticate(other_user)
         response = self.client.get('/api/v1/analytics/dashboard/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['total_leads'], 1)
         self.assertEqual(response.data['active_campaigns'], 1)
         self.assertEqual(response.data['replied'], 1)
+        self.assertEqual(len(response.data['campaign_stats']), 1)
+        self.assertEqual(
+            response.data['campaign_stats'][0]['name'],
+            'Other Corp Campaign',
+        )
+        self.assertEqual(len(response.data['recent_activity']), 1)
+        self.assertIn(
+            'otherlead@othercorp.test',
+            response.data['recent_activity'][0]['description'],
+        )
+        self.assertEqual(sum(response.data['time_series']['replied']), 1)
 
     def test_dashboard_analytics_requires_authentication(self):
         self.client.force_authenticate(user=None)
